@@ -2,38 +2,58 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const axios = require('axios');
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+// MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch(err => console.error("Mongo error:", err));
 
+// User schema
 const User = mongoose.model('User', new mongoose.Schema({
   uid: { type: String, unique: true },
   username: String,
   createdAt: { type: Date, default: Date.now }
 }));
 
+// Signup endpoint
 app.post('/api/signup', async (req, res) => {
-  const { uid, username } = req.body;
-  if (!uid || !username) return res.status(400).json({ error: 'Missing uid or username' });
+  const { accessToken } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: 'Access token is required' });
+  }
 
   try {
+    // Verify access token with Pi API
+    const piResponse = await axios.get('https://api.minepi.com/v2/me', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+
+    const { uid, username } = piResponse.data.user;
+
+    // Upsert user into DB
     const user = await User.findOneAndUpdate(
       { uid },
       { username },
       { upsert: true, new: true }
     );
-    res.json({ message: 'User stored', user });
+
+    res.json({ message: 'User verified and stored', username: user.username });
   } catch (err) {
-    console.error("DB error:", err);
-    res.status(500).json({ error: 'Failed to save user' });
+    console.error("Verification or DB error:", err.response?.data || err.message);
+    res.status(401).json({ error: 'Invalid or expired access token' });
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
 });
